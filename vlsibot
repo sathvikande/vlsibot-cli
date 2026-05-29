@@ -24,6 +24,11 @@ def generate_tb(file_path):
     module_name = mod_match.group(1)
     ports = re.findall(r'(input|output|inout)\s+(wire|reg|logic)?\s*(\[[^\]]+\])?\s*(\w+)', verilog_code)
     
+    # Extract file extension dynamically
+    _, ext = os.path.splitext(file_path)
+    if not ext: ext = ".sv"
+    is_sv = (ext.lower() == ".sv")
+    
     tb_code = f"`timescale 1ns / 1ps\n\nmodule tb_{module_name}();\n\n"
     inst_ports = []
     has_clk = False
@@ -31,7 +36,9 @@ def generate_tb(file_path):
     
     for direction, net_type, dims, name in ports:
         dims_str = f" {dims.strip()}" if dims else ""
-        tb_code += f"    logic{dims_str} {name};\n"
+        # Use 'logic' for SV, 'reg'/'wire' for standard V
+        data_type = "logic" if is_sv else ("reg" if direction == "input" else "wire")
+        tb_code += f"    {data_type}{dims_str} {name};\n"
         inst_ports.append(f".{name}({name})")
         if direction == 'input' and name in ['clk', 'clock', 'sys_clk', 'sys_clock']:
             has_clk = True
@@ -56,7 +63,8 @@ def generate_tb(file_path):
     tb_code += "\n        #20;\n        // TODO: Drive signals here\n\n"
     tb_code += "        #100;\n        $display(\"Simulation Complete.\");\n        $finish;\n    end\nendmodule\n"
     
-    out_file = f"tb_{module_name}.sv"
+    # Save with matching extension
+    out_file = f"tb_{module_name}{ext}"
     with open(out_file, 'w') as f:
         f.write(tb_code)
     print(f"✅ Regex TB generated: {out_file}")
@@ -72,23 +80,29 @@ def generate_tb_ai(file_path):
     mod_match = re.search(r'module\s+(\w+)', verilog_code)
     module_name = mod_match.group(1) if mod_match else "unknown_module"
 
+    # Extract file extension dynamically
+    _, ext = os.path.splitext(file_path)
+    if not ext: ext = ".sv"
+    lang = "SystemVerilog" if ext.lower() == ".sv" else "Verilog"
+
     GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
     if not GROQ_API_KEY:
         print("❌ Error: GROQ_API_KEY missing. Run: export GROQ_API_KEY='your_key'")
         return
 
-    print("🤖 AI is analyzing RTL and writing SystemVerilog...")
+    print(f"🤖 AI is analyzing RTL and writing {lang}...")
+    
+    # Dynamically prompt AI based on user's file extension
     ai_prompt = (
         "You are an expert Silicon Verification Engineer. "
-        "Write a complete, professional SystemVerilog testbench for the following RTL module. "
+        f"Write a complete, professional {lang} testbench for the following RTL module. "
         "Include proper clock generation, reset initialization, and a basic directed test sequence. "
-        "Output ONLY valid SystemVerilog code. Do NOT wrap it in markdown blockticks. Zero conversational filler.\n\n"
+        f"Output ONLY valid {lang} code. Do NOT wrap it in markdown blockticks. Zero conversational filler.\n\n"
         f"RTL Code:\n{verilog_code}"
     )
 
     data = {"model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": ai_prompt}], "temperature": 0.2}
 
-    # Use native Linux cURL
     curl_cmd = [
         "curl", "-s", "-X", "POST",
         "https://api.groq.com/openai/v1/chat/completions",
@@ -98,7 +112,6 @@ def generate_tb_ai(file_path):
     ]
 
     try:
-        # Compatible with older Python 3.6 environments
         result = subprocess.run(curl_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         stdout_str = result.stdout.decode('utf-8')
         response_json = json.loads(stdout_str)
@@ -119,10 +132,11 @@ def generate_tb_ai(file_path):
         print(f"❌ AI Generation failed: {e}")
         return
 
-    out_file = f"tb_{module_name}_ai.sv"
+    # Save with matching extension
+    out_file = f"tb_{module_name}_ai{ext}"
     with open(out_file, 'w') as f:
         f.write(final_reply)
-    print(f"✅ AI SystemVerilog TB generated: {out_file}")
+    print(f"✅ AI {lang} TB generated: {out_file}")
 
 def scan_log(file_path):
     try:
@@ -165,13 +179,13 @@ def log_to_notion(content):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("🧠 VLSI Bot CLI v1.0")
+        print("🧠 VLSI Bot CLI v1.1")
         print("Usage: vlsibot <command> [arguments]")
         print("\nCommands:")
-        print("  tb <file.v>    : Generate boilerplate SV testbench instantly")
-        print("  aitb <file.v>  : Generate advanced SV testbench using AI")
-        print("  scan <log.txt> : Scan EDA logs for DRC, Setup, and Hold metrics")
-        print("  log \"<text>\"   : Send notes directly to your Notion database")
+        print("  tb <file.v/.sv>   : Generate boilerplate testbench instantly")
+        print("  aitb <file.v/.sv> : Generate advanced testbench using AI")
+        print("  scan <log.txt>    : Scan EDA logs for DRC, Setup, and Hold metrics")
+        print("  log \"<text>\"      : Send notes directly to your Notion database")
         sys.exit(1)
 
     command = sys.argv[1]
